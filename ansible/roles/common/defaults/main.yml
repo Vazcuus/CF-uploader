@@ -1,2 +1,2 @@
 common_user_name: ansible
-common_path_pubkey: "/home/levk/.ssh/id_ed25519.pub"
+common_path_pubkey: "/home/lev/.ssh/id_ed25519.pub"
