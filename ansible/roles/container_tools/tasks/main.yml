@@ -1,0 +1,25 @@
+---
+- name: Установить необходимые системные зависимости
+  ansible.builtin.apt:
+    name: "{{ container_tools_dependecies }}"
+    state: present
+    update_cache: yes
+
+- name: Установка зависимостей python3
+  ansible.builtin.pip:
+    name: "{{ container_tools_python_dependecies }}"
+    
+- name: Установка Docker
+  ansible.builtin.include_tasks: install_docker.yml
+  tags: install_docker
+
+- name: Установка инструментов K8s
+  ansible.builtin.include_tasks: install_k8s_tools.yml
+  tags: install_k8s_tools
+
+- name: Перезапуск SSH сессии
+  meta: reset_connection
+
+- name: Установка minikube
+  ansible.builtin.import_tasks: install_minikube.yml
+  tags: install_minikube

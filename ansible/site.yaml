@@ -1,0 +1,10 @@
+---
+- name: Настройка окружения для работы с K8s/Minikube
+  hosts: my-vms
+  become: yes
+
+  roles: 
+    - { role: common, tags: ["common"]}
+    - { role: container_tools, tags: ["container_tools"]}
+    - { role: k8s_deploy, tags: ["k8s_deploy"]}
+

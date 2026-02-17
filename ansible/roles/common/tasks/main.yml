@@ -1,0 +1,8 @@
+---
+- name: Создание пользователя
+  ansible.builtin.import_tasks: create-user-ansible.yml
+  tags: setup_user
+
+- name: Обновление ВМ
+  ansible.builtin.include_tasks: update-vm.yml
+  tags: update_vm

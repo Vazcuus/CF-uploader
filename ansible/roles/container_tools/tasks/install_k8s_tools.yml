@@ -1,0 +1,19 @@
+---
+- name: Скачивание GPG ключа K8s
+  ansible.builtin.get_url:
+    url: "https://pkgs.k8s.io/core:/stable:/{{ container_tools_k8s_version }}/deb/Release.key"
+    dest: "/etc/apt/keyrings/kubernetes-apt-keyring.asc"
+    mode: '0644'
+    force: true # если смена версии
+
+- name: Добавление репозитория K8s
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/{{ container_tools_k8s_version }}/deb/ /"
+    state: present
+    filename: kubernetes
+
+- name: Установка инструментов K8s 
+  ansible.builtin.apt:
+    name: "{{ container_tools_k8s_package }}"
+    state: present
+    update_cache: yes

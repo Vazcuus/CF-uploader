@@ -1,0 +1,15 @@
+---
+- name: Копирование папки манифестов на удаленный хост
+  ansible.builtin.copy:
+    src: ./manifests/postgres
+    dest: /tmp/manifests
+    
+- name: Создание пространства имен в minikube
+  kubernetes.core.k8s:
+    kubeconfig: /home/ansible/.kube/config
+    state: present
+    src: "/tmp/manifests/postgres/{{ item | basename }}"
+  with_fileglob:
+    - "manifests/postgres/*.yml"
+    - "manifests/postgres/*.yaml"
+    

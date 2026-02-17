@@ -1,0 +1,25 @@
+---
+- name: Создание пользователя {{ common_user_name }}
+  ansible.builtin.user:
+    name: "{{ common_user_name }}"
+    comment: "{{ common_user_name }} Admin User"
+    uid: 1060
+    groups:
+      - sudo
+    append: yes
+    shell: /bin/bash
+    state: present
+    create_home: yes
+
+- name: Беспарольный sudo для {{ common_user_name }}
+  ansible.builtin.copy:
+    content: "{{ common_user_name }} ALL=(ALL) NOPASSWD:ALL"
+    dest: "/etc/sudoers.d/{{ common_user_name }}"
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
+- name: Добавление публичного ключа на удаленные хосты
+  ansible.builtin.authorized_key:
+    user: "{{ common_user_name }}"
+    state: present
+    key: "{{ lookup('file', common_path_pubkey) }}"

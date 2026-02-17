@@ -1,0 +1,24 @@
+container_tools_docker_packages:
+  - docker-ce 
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin
+
+container_tools_k8s_package: 
+  - kubectl
+
+container_tools_dependecies:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release 
+  - python3
+  - python3-pip
+
+container_tools_python_dependecies:
+  - pyyaml
+  - kubernetes
+
+container_tools_k8s_version: "v1.30"

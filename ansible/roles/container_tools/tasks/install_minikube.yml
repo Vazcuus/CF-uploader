@@ -1,0 +1,22 @@
+---
+- name: Установка бинарника minikube
+  ansible.builtin.get_url: 
+    url: "https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64"
+    dest: /usr/local/bin/minikube
+    mode: '0755'
+    force: no
+    
+- name: Старт миникубера с докер драйвером
+  become: false
+  command: minikube start --driver=docker
+  args:
+    creates: "~/.minikube/machines/minikube/config.json"
+
+- name: Проверка кластера на запуск
+  become: false
+  command: kubectl get nodes
+  register: kubectl_output
+
+- name: Посмотреть ноды
+  debug:
+    msg: "{{ kubectl_output.stdout }}"

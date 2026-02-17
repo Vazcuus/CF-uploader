@@ -1,0 +1,3 @@
+---
+- name: Создание пространства имен в minikube
+  ansible.builtin.import_tasks: deploy-postgres.yml

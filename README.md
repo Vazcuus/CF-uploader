@@ -1,2 +1,3 @@
 # CF-uploader
-cloud file uploader
+Cloud File Uploader
+

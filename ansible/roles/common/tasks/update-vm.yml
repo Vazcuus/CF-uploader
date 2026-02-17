@@ -1,0 +1,15 @@
+---
+- name: Обновить кэш пакетов apt
+  ansible.builtin.apt:
+    update_cache: yes
+    upgrade: dist
+    cache_valid_time: 3600
+
+- name: Проверка необходимости перезагрузки
+  stat:
+    path: /var/run/reboot-required
+  register: reboot_required_file
+
+- name: Перезапустить сервер, если это необходимо
+  ansible.builtin.reboot:
+  when: reboot_required_file.stat.exists
