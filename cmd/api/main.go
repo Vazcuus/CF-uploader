@@ -2,33 +2,53 @@ package main
 
 import (
 	"context"
-	// "fmt"
+	"database/sql"
+	"fmt"
 	"html/template"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	_ "github.com/lib/pq" // Драйвер Postgres
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
+// Структура для отображения файла из БД
+type FileRecord struct {
+	ID           int
+	Filename     string
+	S3Key        string
+	UploaderName string
+	FileSize     int64
+	UploadDate   time.Time
+}
+
 var (
+	// S3 переменные
 	endpoint        = os.Getenv("S3_ENDPOINT")
 	accessKeyID     = os.Getenv("S3_ACCESS_KEY")
 	secretAccessKey = os.Getenv("S3_SECRET_KEY")
 	useSSL          = os.Getenv("S3_USE_SSL") == "true"
 	bucketName      = os.Getenv("S3_BUCKET")
+
+	// Postgres переменные
+	dbHost     = os.Getenv("DB_HOST")
+	dbPort     = os.Getenv("DB_PORT")
+	dbUser     = os.Getenv("DB_USER")
+	dbPassword = os.Getenv("DB_PASSWORD")
+	dbName     = os.Getenv("DB_NAME")
 )
 
-// Обновили шаблон: добавили список файлов с сылками на скачивание
 var tmpl = template.Must(template.New("index").Parse(`
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>S3 Storage</title>
+    <title>S3 Manager & Chat</title>
     <style>
         :root {
             --primary: #2563eb;
@@ -42,124 +62,148 @@ var tmpl = template.Must(template.New("index").Parse(`
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: var(--bg);
             color: var(--text);
-            line-height: 1.6;
             margin: 0;
+            height: 100vh;
             display: flex;
-            justify-content: center;
-            padding: 40px 20px;
+            overflow: hidden;
         }
-        .container { width: 100%; max-width: 700px; }
+
+        /* Layout */
+        .main-wrapper { display: flex; width: 100%; height: 100%; }
         
-        h2 { font-weight: 600; font-size: 1.5rem; margin-bottom: 1.2rem; display: flex; align-items: center; justify-content: space-between; }
-        
-        /* Секция загрузки */
-        .upload-section {
+        /* Левая часть: Файлы */
+        .files-column {
+            flex: 1;
+            padding: 30px 40px;
+            overflow-y: auto;
+            border-right: 1px solid var(--border);
+        }
+
+        /* Правая часть: Чат */
+        .chat-column {
+            width: 400px;
             background: var(--card-bg);
+            display: flex;
+            flex-direction: column;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.02);
+        }
+
+        /* Элементы управления файлами */
+        .upload-section {
+            background: #fff;
             padding: 1.5rem;
             border-radius: 12px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             margin-bottom: 2rem;
             border: 1px solid var(--border);
         }
-        .upload-form { display: flex; gap: 10px; align-items: center; }
-        input[type="file"] { font-size: 0.9rem; flex-grow: 1; }
-        
-        .btn {
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s;
-            border: none;
-            font-size: 0.9rem;
+        .search-container { margin-bottom: 1.5rem; position: relative; }
+        .search-input {
+            width: 100%; padding: 12px 16px 12px 40px;
+            border-radius: 10px; border: 1px solid var(--border);
+            font-size: 0.95rem; outline: none; box-sizing: border-box;
         }
+        .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: #94a3b8; }
+
+        .btn { padding: 10px 20px; border-radius: 8px; font-weight: 500; cursor: pointer; border: none; font-size: 0.9rem; }
         .btn-primary { background: var(--primary); color: white; }
-        .btn-primary:hover { background: #1d4ed8; }
-        
-        .btn-danger { 
-            background: var(--danger); 
-            color: white; 
-            display: none; /* Скрыта пока не выбраны файлы */
-        }
-        .btn-danger:hover { background: #dc2626; }
+        .btn-danger { background: var(--danger); color: white; display: none; }
 
         /* Список файлов */
-        .file-list { list-style: none; padding: 0; margin: 0; }
+        .file-list { list-style: none; padding: 0; }
         .file-item {
-            background: var(--card-bg);
-            margin-bottom: 8px;
-            padding: 12px 16px;
-            border-radius: 10px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border: 1px solid var(--border);
-            transition: transform 0.1s, border-color 0.2s;
+            background: #fff; margin-bottom: 8px; padding: 12px 16px;
+            border-radius: 10px; display: flex; justify-content: space-between;
+            align-items: center; border: 1px solid var(--border);
         }
-        .file-item:hover { border-color: #cbd5e1; background: #fdfdfd; }
-        
         .file-main { display: flex; align-items: center; gap: 15px; }
-        .file-checkbox { width: 18px; height: 18px; cursor: pointer; }
-        
-        .file-info { display: flex; flex-direction: column; }
-        .file-name { font-weight: 500; font-size: 0.95rem; color: var(--text); }
+        .file-name { font-weight: 500; font-size: 0.95rem; }
         .file-size { font-size: 0.8rem; color: #64748b; }
-        
-        .download-link {
-            text-decoration: none;
-            color: var(--primary);
-            font-size: 0.85rem;
-            font-weight: 600;
-            padding: 6px 12px;
-            border-radius: 6px;
-            background: #eff6ff;
-        }
-        .download-link:hover { background: #dbeafe; }
 
-        .empty-state { text-align: center; padding: 40px; color: #94a3b8; background: #fff; border-radius: 12px; border: 1px dashed var(--border); }
+        /* Чат */
+        .chat-header { padding: 20px; border-bottom: 1px solid var(--border); }
+        .chat-tabs { display: flex; gap: 5px; margin-top: 10px; }
+        .tab-btn { padding: 6px 12px; font-size: 0.8rem; border-radius: 20px; border: 1px solid var(--border); cursor: pointer; }
+        .tab-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+        .msg { padding: 10px; border-radius: 10px; font-size: 0.9rem; background: #f1f5f9; max-width: 85%; }
+        .chat-input-area { padding: 20px; border-top: 1px solid var(--border); display: flex; gap: 10px; }
+        .chat-input { flex: 1; padding: 10px; border: 1px solid var(--border); border-radius: 8px; outline: none; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h2>S3 Storage</h2>
-        
-        <div class="upload-section">
-            <form action="/upload" method="post" enctype="multipart/form-data" class="upload-form">
-                <input type="file" name="myFile" required>
-                <button type="submit" class="btn btn-primary">Загрузить</button>
+    <div class="main-wrapper">
+        <div class="files-column">
+            <h2>TellThink Storage</h2>
+            <div class="upload-section">
+                <form action="/upload" method="post" enctype="multipart/form-data" style="display: flex; gap: 10px;">
+                    <input type="file" name="myFile" required>
+                    <button type="submit" class="btn btn-primary">Загрузить</button>
+                </form>
+            </div>
+
+            <form action="/delete" method="post" id="deleteForm">
+                <h2 style="display: flex; justify-content: space-between;">
+                    Файлы в облаке
+                    <button type="submit" class="btn btn-danger" id="deleteBtn">Удалить</button>
+                </h2>
+
+                <div class="search-container">
+                    <span class="search-icon">🔍</span>
+                    <input type="text" id="searchInput" class="search-input" placeholder="Поиск по названию..." onkeyup="filterFiles()">
+                </div>
+
+                <ul class="file-list" id="fileList">
+                {{range .}}
+                    <li class="file-item">
+                        <div class="file-main">
+                            <input type="checkbox" name="names" value="{{.Filename}}" class="file-checkbox" onchange="updateUI()">
+                            <div class="file-info">
+                                <div class="file-name">{{.Filename}}</div>
+                                <div class="file-size">{{.FileSize}} байт</div>
+                            </div>
+                        </div>
+                        <a href="/download?name={{.Filename}}" style="text-decoration:none; color:var(--primary); font-weight:600; font-size:0.85rem;">Скачать</a>
+                    </li>
+                {{else}}
+                    <p style="text-align:center; color:#94a3b8;">Файлов нет</p>
+                {{end}}
+                </ul>
             </form>
         </div>
 
-        <form action="/delete" method="post" id="deleteForm">
-            <h2>
-                Файлы в облаке
-                <button type="submit" class="btn btn-danger" id="deleteBtn">Удалить выбранные</button>
-            </h2>
-            
-            <ul class="file-list">
-            {{range .}}
-                <li class="file-item">
-                    <div class="file-main">
-                        <input type="checkbox" name="names" value="{{.Key}}" class="file-checkbox" onchange="updateUI()">
-                        <div class="file-info">
-                            <span class="file-name">{{.Key}}</span>
-                            <span class="file-size">{{.Size}} байт</span>
-                        </div>
-                    </div>
-                    <a href="/download?name={{.Key}}" class="download-link">Скачать</a>
-                </li>
-            {{else}}
-                <div class="empty-state">В этом бакете пока пусто. Загрузите первый файл!</div>
-            {{end}}
-            </ul>
-        </form>
+        <div class="chat-column">
+            <div class="chat-header">
+                <h3 style="margin:0;">Обсуждение</h3>
+                <div class="chat-tabs">
+                    <button class="tab-btn active">Общее</button>
+                    <button class="tab-btn">Важное</button>
+                    <button class="tab-btn">Инфо</button>
+                </div>
+            </div>
+            <div class="chat-messages" id="chatMsgs">
+                <div class="msg">Чат готов к работе! 🚀</div>
+            </div>
+            <div class="chat-input-area">
+                <input type="text" class="chat-input" placeholder="Сообщение...">
+                <button class="btn btn-primary">➜</button>
+            </div>
+        </div>
     </div>
 
     <script>
+        function filterFiles() {
+            const filter = document.getElementById('searchInput').value.toLowerCase();
+            const items = document.getElementsByClassName('file-item');
+            for (let item of items) {
+                const name = item.querySelector('.file-name').textContent.toLowerCase();
+                item.style.display = name.includes(filter) ? "" : "none";
+            }
+        }
+
         function updateUI() {
-            const checkedCount = document.querySelectorAll('.file-checkbox:checked').length;
-            const deleteBtn = document.getElementById('deleteBtn');
-            deleteBtn.style.display = checkedCount > 0 ? 'block' : 'none';
+            const count = document.querySelectorAll('.file-checkbox:checked').length;
+            document.getElementById('deleteBtn').style.display = count > 0 ? 'block' : 'none';
         }
     </script>
 </body>
@@ -167,35 +211,48 @@ var tmpl = template.Must(template.New("index").Parse(`
 `))
 
 func main() {
+	// 1. Инициализация MinIO
 	minioClient, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKeyID, secretAccessKey, ""),
 		Secure: useSSL,
 	})
 	if err != nil {
-		log.Fatalln(err)
+		log.Fatalln("MinIO Error:", err)
 	}
 
-	// 1. Главная страница со списком файлов
+	// 2. Инициализация Postgres
+	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		dbHost, dbPort, dbUser, dbPassword, dbName)
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		log.Fatalln("DB Connection Error:", err)
+	}
+	defer db.Close()
+
+	// Главная страница: теперь берем данные из БД
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		ctx := context.Background()
-		var objects []minio.ObjectInfo
-		
-		// Получаем список объектов из бакета
-		objectCh := minioClient.ListObjects(ctx, bucketName, minio.ListObjectsOptions{})
-		for obj := range objectCh {
-			if obj.Err != nil {
-				http.Error(w, obj.Err.Error(), http.StatusInternalServerError)
-				return
-			}
-			objects = append(objects, obj)
+		rows, err := db.Query("SELECT id, filename, s3_key, filesize, upload_date FROM files ORDER BY upload_date DESC")
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
 		}
-		tmpl.Execute(w, objects)
+		defer rows.Close()
+
+		var files []FileRecord
+		for rows.Next() {
+			var f FileRecord
+			if err := rows.Scan(&f.ID, &f.Filename, &f.S3Key, &f.FileSize, &f.UploadDate); err != nil {
+				continue
+			}
+			files = append(files, f)
+		}
+		tmpl.Execute(w, files)
 	})
 
-	// 2. Обработчик загрузки (как в прошлом примере)
+	// Загрузка: сначала в S3, потом запись в БД
 	http.HandleFunc("/upload", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			http.Redirect(w, r, "/", http.StatusSeeOther)
+			http.Redirect(w, r, "/", 303)
 			return
 		}
 		file, handler, err := r.FormFile("myFile")
@@ -205,72 +262,59 @@ func main() {
 		}
 		defer file.Close()
 
+		// Загружаем в S3
 		_, err = minioClient.PutObject(context.Background(), bucketName, handler.Filename, file, handler.Size, minio.PutObjectOptions{
 			ContentType: handler.Header.Get("Content-Type"),
 		})
 		if err != nil {
+			http.Error(w, "S3 Upload Error: "+err.Error(), 500)
+			return
+		}
+
+		// Сохраняем метаданные в БД
+		_, err = db.Exec("INSERT INTO files (filename, s3_key, filesize) VALUES ($1, $2, $3)",
+			handler.Filename, handler.Filename, handler.Size)
+		if err != nil {
+			log.Println("DB Insert Error:", err)
+		}
+
+		http.Redirect(w, r, "/", 303)
+	})
+
+	// Скачивание (без изменений, использует S3_KEY из URL)
+	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
+		objectName := r.URL.Query().Get("name")
+		object, err := minioClient.GetObject(context.Background(), bucketName, objectName, minio.GetObjectOptions{})
+		if err != nil {
 			http.Error(w, err.Error(), 500)
 			return
 		}
-		http.Redirect(w, r, "/", http.StatusSeeOther)
-	})
-
-	// 3. Обработчик скачивания
-	http.HandleFunc("/download", func(w http.ResponseWriter, r *http.Request) {
-		objectName := r.URL.Query().Get("name")
-		if objectName == "" {
-			http.Error(w, "Имя файла не указано", http.StatusBadRequest)
-			return
-		}
-
-		// Получаем объект из S3
-		object, err := minioClient.GetObject(context.Background(), bucketName, objectName, minio.GetObjectOptions{})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
 		defer object.Close()
-
-		// Устанавливаем заголовки, чтобы браузер начал скачивание файла
 		w.Header().Set("Content-Disposition", "attachment; filename="+objectName)
-		w.Header().Set("Content-Type", "application/octet-stream")
-
-		// Копируем содержимое объекта в ответ HTTP
-		if _, err := io.Copy(w, object); err != nil {
-			log.Println("Ошибка при передаче файла:", err)
-		}
+		io.Copy(w, object)
 	})
-	
+
+	// Удаление: и из S3, и из БД
 	http.HandleFunc("/delete", func(w http.ResponseWriter, r *http.Request) {
-    if r.Method != http.MethodPost {
-        http.Redirect(w, r, "/", http.StatusSeeOther)
-        return
-    }
+		r.ParseForm()
+		fileNames := r.Form["names"]
 
-    // Получаем список имен файлов из чекбоксов
-    r.ParseForm()
-    fileNames := r.Form["names"]
-
-    if len(fileNames) > 0 {
-        objectsCh := make(chan minio.ObjectInfo)
-
-        // Отправляем имена в канал для удаления
-        go func() {
-            defer close(objectsCh)
-            for _, name := range fileNames {
-                objectsCh <- minio.ObjectInfo{Key: name}
-            }
-        }()
-
-        // Выполняем удаление в MinIO
-        errorCh := minioClient.RemoveObjects(context.Background(), bucketName, objectsCh, minio.RemoveObjectsOptions{})
-        for err := range errorCh {
-            log.Println("Ошибка при удалении объекта:", err.Err)
-        }
-    }
-
-    http.Redirect(w, r, "/", http.StatusSeeOther)
+		for _, name := range fileNames {
+			// Удаляем из S3
+			err := minioClient.RemoveObject(context.Background(), bucketName, name, minio.RemoveObjectOptions{})
+			if err != nil {
+				log.Println("S3 Delete Error:", err)
+				continue
+			}
+			// Удаляем из БД
+			_, err = db.Exec("DELETE FROM files WHERE s3_key = $1", name)
+			if err != nil {
+				log.Println("DB Delete Error:", err)
+			}
+		}
+		http.Redirect(w, r, "/", 303)
 	})
 
+	log.Println("Server started on :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
